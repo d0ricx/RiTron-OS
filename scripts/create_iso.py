@@ -14,6 +14,7 @@ FAT16_MAX_CLUSTERS = 65524
 END_OF_CHAIN = 0xFFFF
 
 def directory_entry(name, extension, attributes, first_cluster, size=0):
+    """Encode the fixed 32-byte FAT directory entry used by the EFI boot image."""
     entry = bytearray(32)
     entry[0:8] = name.ljust(8, b" ")
     entry[8:11] = extension.ljust(3, b" ")
@@ -24,6 +25,7 @@ def directory_entry(name, extension, attributes, first_cluster, size=0):
     return entry
 
 def fat16_image(bootloader_path, kernel_path):
+    """Build an EFI-system-partition-style FAT16 image containing both EFI files."""
     files = [
         (b"BOOTX64", b"EFI", bootloader_path.read_bytes()),
         (b"KERNEL", b"EFI", kernel_path.read_bytes()),
@@ -31,11 +33,13 @@ def fat16_image(bootloader_path, kernel_path):
     if any(not contents for _, _, contents in files):
         raise ValueError("EFI images must not be empty")
 
+    # Choose the smallest cluster size that keeps the FAT16 cluster count valid.
     for sectors_per_cluster in (1, 2, 4, 8, 16, 32, 64):
         clusters_per_file = [
             math.ceil(len(contents) / (SECTOR_SIZE * sectors_per_cluster))
             for _, _, contents in files
         ]
+        # FAT type is determined by cluster count, so keep the image in FAT16's range.
         cluster_count = max(FAT16_MIN_CLUSTERS, 3 + sum(clusters_per_file))
         if cluster_count <= FAT16_MAX_CLUSTERS:
             break
@@ -65,10 +69,11 @@ def fat16_image(bootloader_path, kernel_path):
     boot_sector[36] = 0x80
     boot_sector[38] = 0x29
     struct.pack_into("<I", boot_sector, 39, 0x434B4552)
-    boot_sector[43:54] = b"C KERNEL   "
+    boot_sector[43:54] = b"DANEELS RIT"
     boot_sector[54:62] = b"FAT16   "
     boot_sector[510:512] = b"\x55\xaa"
 
+    # Cluster 2 is EFI, cluster 3 is BOOT, and file chains begin at cluster 4.
     fat = bytearray(fat_sectors * SECTOR_SIZE)
     struct.pack_into("<HH", fat, 0, 0xFFF8, END_OF_CHAIN)
     struct.pack_into("<HH", fat, 2 * 2, END_OF_CHAIN, END_OF_CHAIN)
@@ -119,6 +124,7 @@ def fat16_image(bootloader_path, kernel_path):
     return image
 
 def posix_path(path, cygpath):
+    """Translate Windows paths for MSYS xorriso when its companion tool exists."""
     if cygpath is None:
         return os.fspath(path)
     return subprocess.run(
@@ -129,6 +135,7 @@ def posix_path(path, cygpath):
     ).stdout.strip()
 
 def find_xorriso(executable):
+    """Resolve xorriso from PATH, an explicit path, or common MSYS2 locations."""
     resolved = shutil.which(executable)
     if resolved:
         return resolved
@@ -187,7 +194,8 @@ def main():
         if sibling_cygpath.is_file():
             cygpath = os.fspath(sibling_cygpath)
 
-    with tempfile.TemporaryDirectory(prefix="c-kernel-iso-") as temporary:
+    # Stage UEFI's removable-media path and El Torito image in a temporary tree.
+    with tempfile.TemporaryDirectory(prefix="daneels-ritron-iso-") as temporary:
         staging = Path(temporary)
         boot_directory = staging / "EFI" / "BOOT"
         boot_directory.mkdir(parents=True)
@@ -205,7 +213,7 @@ def main():
                 "-R",
                 "-J",
                 "-V",
-                "C_KERNEL",
+                "DANEELS_RITRON",
                 "-o",
                 posix_path(output, cygpath),
                 "-e",

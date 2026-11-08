@@ -4,6 +4,8 @@ import struct
 import tempfile
 from pathlib import Path
 
+# This fixed geometry is the persistent user disk; changing its identity would
+# make the kernel's ATA probe reject existing images.
 SECTOR_SIZE = 512
 TOTAL_SECTORS = 32768
 SECTORS_PER_CLUSTER = 1
@@ -18,6 +20,7 @@ END_OF_CHAIN = 0xFFFF
 
 
 def create_fat16_image():
+    """Create the initial fixed-size FAT16 volume and its volume-label entry."""
     image = bytearray(TOTAL_SECTORS * SECTOR_SIZE)
     boot = memoryview(image)[:SECTOR_SIZE]
     boot[0:3] = b"\xeb\x3c\x90"
@@ -55,6 +58,8 @@ def create_fat16_image():
 
 
 class Fat16Image:
+    """Small host-side FAT16 editor used to preserve files during image updates."""
+
     def __init__(self, image):
         self.image = image
         boot = image[:SECTOR_SIZE]
@@ -96,6 +101,7 @@ class Fat16Image:
 
     @staticmethod
     def short_name(name):
+        # This seeder writes only the system's fixed 8.3 names, not VFAT long names.
         parts = name.upper().split(".")
         if len(parts) > 2 or not parts[0] or len(parts[0]) > 8:
             raise ValueError(f"Invalid FAT 8.3 name: {name}")
@@ -122,6 +128,7 @@ class Fat16Image:
         self.modified = True
 
     def allocate_cluster(self):
+        # Mark and clear the cluster before it is linked into a directory or file.
         for cluster in range(2, self.cluster_count + 2):
             if self.fat_entry(cluster) == 0:
                 self.set_fat_entry(cluster, END_OF_CHAIN)
@@ -142,6 +149,7 @@ class Fat16Image:
         self.modified = True
 
     def directory_offsets(self, directory):
+        # Validate directory chains while walking them to avoid looping on corruption.
         if directory is None:
             start = self.root_start * SECTOR_SIZE
             end = start + self.root_entry_count * 32
@@ -251,6 +259,7 @@ class Fat16Image:
             cluster = next_cluster
 
     def write_file(self, directory, name, data):
+        # Stage a replacement chain before switching the directory entry.
         offset, entry = self.find_entry(directory, name)
         if entry is not None and entry[11] & 0x10:
             raise ValueError(f"Expected a file: {name}")
@@ -281,6 +290,7 @@ class Fat16Image:
             self.free_chain(old_cluster)
 
     def move_volume_root_entries_to_usr(self, usr_cluster, root_cluster):
+        # Migrate legacy root files once, preserving each existing FAT entry and chain.
         offsets = self.directory_offsets(None)
         entries = []
         root_name = self.short_name("ROOT")
@@ -327,6 +337,7 @@ class Fat16Image:
 
 
 def seed_system_files(image, bootloader, kernel):
+    """Ensure the virtual-root layout exists and refresh both protected EFI files."""
     filesystem = Fat16Image(image)
     root_cluster, root_created = filesystem.ensure_directory(None, "ROOT")
     system_cluster, _ = filesystem.ensure_directory(root_cluster, "SYSTEM")
@@ -353,6 +364,7 @@ def main():
 
     if not bootloader.is_file() or not kernel.is_file():
         raise SystemExit("Build BOOTX64.EFI and KERNEL.EFI before creating the disk.")
+    # Never silently replace an unexpected existing disk image.
     if output.exists():
         if output.stat().st_size != TOTAL_SECTORS * SECTOR_SIZE:
             raise SystemExit(
@@ -367,6 +379,8 @@ def main():
     except ValueError as error:
         raise SystemExit(f"Could not update OS files on the FAT16 disk: {error}") from error
 
+    # Replace the disk only after the complete updated image has reached a temp file.
+    # Stage the entire modified image beside the destination, then atomically replace it.
     with tempfile.NamedTemporaryFile(
         dir=output.parent, prefix=output.name + ".", suffix=".tmp", delete=False
     ) as temporary:

@@ -88,6 +88,8 @@ Copy-Item -LiteralPath $varsPath -Destination $writableVars -Force
     -drive "if=none,id=bootcd,format=raw,media=cdrom,file=$isoPath" `
     -device "ide-cd,drive=bootcd,bus=ide.1,bootindex=1" `
     -drive "file=$diskPath,format=raw,if=ide,index=1" `
+    -netdev "user,id=net0" `
+    -device "e1000,netdev=net0" `
     -boot order=d `
     -serial stdio `
     -monitor none

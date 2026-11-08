@@ -98,6 +98,7 @@ static EFI_GUID Acpi10TableGuid = {
 static BOOT_INFO BootInfo;
 
 static bool guid_matches(const EFI_GUID *left, const EFI_GUID *right) {
+    // Compare fields explicitly rather than relying on structure padding.
     if (left->Data1 != right->Data1 || left->Data2 != right->Data2 ||
         left->Data3 != right->Data3) {
         return false;
@@ -111,6 +112,7 @@ static bool guid_matches(const EFI_GUID *left, const EFI_GUID *right) {
 }
 
 static void **boot_service_table(EFI_SYSTEM_TABLE *system_table) {
+    // UEFI service pointers follow the fixed-size system-table header.
     return (void **)((uint8_t *)system_table->BootServices +
                      sizeof(EFI_TABLE_HEADER));
 }
@@ -127,6 +129,7 @@ static EFI_STATUS locate_graphics_output(EFI_SYSTEM_TABLE *system_table,
     size_t handle_count = 0;
     EFI_STATUS status;
 
+    // Prefer the console handle, then search every handle exposing GOP.
     *gop = NULL;
     if (system_table->ConsoleOutHandle != NULL) {
         status = handle_protocol(system_table->ConsoleOutHandle,
@@ -164,6 +167,7 @@ static uint64_t locate_acpi_root(EFI_SYSTEM_TABLE *system_table) {
     uint64_t acpi_root = 0;
     uint64_t fallback_root = 0;
 
+    // Prefer the ACPI 2.0 XSDT, retaining the ACPI 1.0 RSDT as fallback.
     for (size_t index = 0; index < system_table->NumberOfTableEntries; ++index) {
         if (tables[index].VendorTable == NULL) {
             continue;
@@ -190,6 +194,7 @@ static EFI_STATUS prepare_boot_info(EFI_SYSTEM_TABLE *system_table) {
         return EFI_ERROR_BIT | 2;
     }
 
+    // Copy firmware-owned values into the versioned handoff before shutdown.
     BootInfo.magic = BOOT_INFO_MAGIC;
     BootInfo.version = BOOT_INFO_VERSION;
     BootInfo.structure_size = sizeof(BootInfo);
@@ -225,6 +230,7 @@ static EFI_STATUS exit_boot_services(EFI_HANDLE image_handle,
     if (EFI_ERROR(status) || memory_map == NULL) {
         return EFI_ERROR(status) ? status : EFI_ERROR_BIT | 9;
     }
+    // The map key must still match when ExitBootServices is called.
     for (uint32_t attempt = 0; attempt < 3; ++attempt) {
         size_t memory_map_size = allocated_size;
         size_t map_key = 0;
@@ -244,6 +250,7 @@ static EFI_STATUS exit_boot_services(EFI_HANDLE image_handle,
         if (!EFI_ERROR(status)) {
             return EFI_SUCCESS;
         }
+        // Any firmware allocation can invalidate the map key; retry only that case.
         if ((uint32_t)status != 2) {
             return status;
         }
@@ -258,6 +265,7 @@ extern "C" EFI_STATUS EFIAPI uefi_boot_kernel(
     if (system_table == NULL || system_table->BootServices == NULL) {
         return EFI_ERROR_BIT | 2;
     }
+    // No BootServices call is valid after exit_boot_services succeeds.
     status = prepare_boot_info(system_table);
     if (EFI_ERROR(status)) {
         return status;

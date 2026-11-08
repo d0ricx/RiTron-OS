@@ -10,8 +10,10 @@ typedef struct EFI_SYSTEM_TABLE EFI_SYSTEM_TABLE;
 extern "C" {
 #endif
 
+/* Collect firmware state, exit boot services, then enter kernel_main. */
 EFI_STATUS EFIAPI uefi_boot_kernel(EFI_HANDLE image_handle,
                                   EFI_SYSTEM_TABLE *system_table);
+/* Kernel entry after the bootloader has stopped using UEFI services. */
 EFI_STATUS EFIAPI kernel_main(const BOOT_INFO *boot_info);
 
 #ifdef __cplusplus

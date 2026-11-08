@@ -9,6 +9,7 @@
 #define BOOT_INFO_PIXEL_BGR 1
 #define BOOT_INFO_PIXEL_BITMASK 2
 
+/* Channel masks are used only when GOP reports the bit-mask pixel format. */
 typedef struct {
     uint32_t red_mask;
     uint32_t green_mask;
@@ -16,6 +17,10 @@ typedef struct {
     uint32_t reserved_mask;
 } BOOT_PIXEL_MASK;
 
+/*
+ * Versioned handoff from the UEFI loader to the kernel. Physical addresses
+ * remain identity-mapped at this stage; the kernel owns the passed memory map.
+ */
 typedef struct {
     uint64_t magic;
     uint32_t version;

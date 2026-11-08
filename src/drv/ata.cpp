@@ -2,6 +2,7 @@
 
 #include "console.h"
 
+// Legacy primary/secondary IDE ports are used by the QEMU pc (i440FX) machine.
 #define ATA_PRIMARY_IO 0x1F0
 #define ATA_SECONDARY_IO 0x170
 #define ATA_PRIMARY_CONTROL 0x3F6
@@ -27,6 +28,7 @@ typedef struct {
     bool present;
 } ATA_DEVICE;
 
+// The filesystem probes one candidate disk at a time through this shared sector buffer.
 static ATA_DEVICE DataDisk;
 static uint8_t SectorBuffer[ATA_SECTOR_SIZE] __attribute__((aligned(4096)));
 
@@ -59,6 +61,7 @@ static void io_delay(uint16_t control_base) {
 
 static bool wait_not_busy(uint16_t io_base, uint16_t control_base,
                           uint8_t *status_out) {
+    // Bound every hardware wait so an absent or wedged device cannot hang boot.
     for (uint32_t count = 0; count < ATA_POLL_LIMIT; ++count) {
         uint8_t status = port_in8(io_base + 7);
         if (status == 0x00 || status == 0xFF) {
@@ -81,6 +84,7 @@ static bool wait_data_request(const ATA_DEVICE *device) {
     if (!wait_not_busy(device->io_base, device->control_base, &status)) {
         return false;
     }
+    // DRQ means the device is ready for the sector's 256 words of data.
     return (status & (ATA_STATUS_ERROR | ATA_STATUS_DEVICE_FAULT)) == 0 &&
            (status & ATA_STATUS_DRQ) != 0;
 }
@@ -88,6 +92,7 @@ static bool wait_data_request(const ATA_DEVICE *device) {
 static bool wait_command_complete(const ATA_DEVICE *device) {
     uint8_t status;
 
+    // A command can become idle and still report an ATA error or device fault.
     return wait_not_busy(device->io_base, device->control_base, &status) &&
            (status & (ATA_STATUS_ERROR | ATA_STATUS_DEVICE_FAULT)) == 0;
 }
@@ -97,6 +102,7 @@ static bool identify_device(uint16_t io_base, uint16_t control_base,
     uint16_t identify_data[256];
     uint8_t status;
 
+    // IDENTIFY uses a zeroed task-file and returns 256 words of device data.
     port_out8(control_base, 0x02);
     port_out8(io_base + 6, (uint8_t)(0xA0 | (device << 4)));
     io_delay(control_base);
@@ -127,6 +133,7 @@ static bool read_sector(const ATA_DEVICE *device, uint32_t lba,
     if (lba > ATA_LBA28_MAX || lba >= device->sector_count) {
         return false;
     }
+    // LBA28 stores the upper four address bits in the drive/head register.
     port_out8(device->io_base + 6,
               (uint8_t)(0xE0 | (device->device << 4) |
                         ((lba >> 24) & 0x0F)));
@@ -153,6 +160,7 @@ static bool write_sector(const ATA_DEVICE *device, uint32_t lba,
     if (lba > ATA_LBA28_MAX || lba >= device->sector_count) {
         return false;
     }
+    // ATA data ports transfer 16-bit words; serialize bytes little-endian.
     port_out8(device->io_base + 6,
               (uint8_t)(0xE0 | (device->device << 4) |
                         ((lba >> 24) & 0x0F)));
@@ -181,6 +189,7 @@ static bool is_data_disk_boot_sector(const uint8_t *sector) {
                          ((uint32_t)sector[41] << 16) |
                          ((uint32_t)sector[42] << 24);
 
+    // Match the exact volume identity so boot media is never mistaken for user data.
     if (sector[510] != 0x55 || sector[511] != 0xAA ||
         sector[11] != 0x00 || sector[12] != 0x02 ||
         sector[43] != 'K' || sector[44] != 'E' || sector[45] != 'R' ||
@@ -201,6 +210,7 @@ bool ata_pio_initialize(void) {
     static const uint16_t control_bases[2] = {ATA_PRIMARY_CONTROL,
                                               ATA_SECONDARY_CONTROL};
 
+    // Probe both channels/devices, but accept only the project's labeled FAT16 disk.
     DataDisk.present = false;
     for (uint8_t channel = 0; channel < 2; ++channel) {
         for (uint8_t device = 0; device < 2; ++device) {
@@ -235,6 +245,7 @@ bool ata_pio_read_blocks(uint32_t lba, uint32_t block_count, void *buffer) {
         (uint64_t)lba + block_count > DataDisk.sector_count) {
         return false;
     }
+    // The simple PIO path processes one sector per command and stops on first error.
     for (uint32_t index = 0; index < block_count; ++index) {
         if (!read_sector(&DataDisk, lba + index,
                          destination + (size_t)index * ATA_SECTOR_SIZE)) {
@@ -256,6 +267,7 @@ bool ata_pio_write_blocks(uint32_t lba, uint32_t block_count,
         (uint64_t)lba + block_count > DataDisk.sector_count) {
         return false;
     }
+    // Keep block semantics at this API while reusing the checked sector routine.
     for (uint32_t index = 0; index < block_count; ++index) {
         if (!write_sector(&DataDisk, lba + index,
                           source + (size_t)index * ATA_SECTOR_SIZE)) {
