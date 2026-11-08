@@ -1,0 +1,17 @@
+/build/
+/dist/
+*.efi
+*.EFI
+*.iso
+*.img
+OVMF_VARS*.fd
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini

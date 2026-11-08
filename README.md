@@ -1,12 +1,42 @@
+<div align="center">
+
 # Daneel's RiTron
 
-Daneel's RiTron is an experimental x86_64 operating system that boots through
-UEFI into a freestanding C++ kernel. The project includes kernel-owned display,
-keyboard, memory, ATA storage, and e1000 networking drivers; a FAT16 filesystem;
-an interactive shell; and a small Rust implementation of an IPv4/HTTP client.
+**A small x86_64 UEFI operating system, built to explore kernels, storage, and networking.**
 
-This is an early development project, not a general-purpose OS. It currently
-targets QEMU and legacy IDE/e1000 devices.
+<br>
+
+**Kernel & networking**
+
+![C++ kernel](https://img.shields.io/badge/C%2B%2B-kernel-00599C?logo=cplusplus&logoColor=white)
+![Rust networking](https://img.shields.io/badge/Rust-networking-000000?logo=rust&logoColor=white)
+
+**Build tools**
+
+![GNU Make](https://img.shields.io/badge/GNU_Make-build-3971ED)
+![Python 3](https://img.shields.io/badge/Python-3-3776AB?logo=python&logoColor=white)
+![MinGW-w64](https://img.shields.io/badge/MinGW--w64-cross--compiler-0078D4)
+![xorriso](https://img.shields.io/badge/xorriso-ISO_builder-555555)
+![Docker](https://img.shields.io/badge/Docker-build-2496ED?logo=docker&logoColor=white)
+
+**Run & test**
+
+![UEFI](https://img.shields.io/badge/UEFI-boot-6B4FBB)
+![QEMU](https://img.shields.io/badge/QEMU-tested-FF6600)
+
+<br>
+
+<img src="docs/screenshots/shell.png" alt="Daneel's RiTron shell running in QEMU" width="100%">
+
+*The kernel boots to its interactive shell in QEMU.*
+
+</div>
+
+---
+
+Daneel's RiTron is an experimental operating system with a freestanding C++
+kernel. It is an active learning project, currently tested with QEMU and a
+narrow set of virtual devices—not a general-purpose OS.
 
 ## Get started
 
@@ -16,38 +46,44 @@ Build the EFI applications, bootable ISO, and persistent FAT16 data disk:
 make iso disk
 ```
 
-Run the OS in QEMU (requires QEMU and OVMF firmware):
+Run it with QEMU and OVMF firmware:
 
 ```sh
 make qemu
 ```
 
-For prerequisites, Linux and Windows setup, Docker build instructions, and
-output details, see [Building and running Daneel's RiTron](docs/BUILD.md).
+See the [build and run guide](docs/BUILD.md) for toolchain setup, Docker builds,
+and platform-specific details.
 
-Community contributions and vulnerability reports are covered by
-[CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md),
-and [SECURITY.md](SECURITY.md).
+## What's inside
+
+| Area | Highlights |
+| --- | --- |
+| **Boot and kernel** | UEFI boot flow, framebuffer console, interrupts, memory allocator, and PS/2 keyboard. |
+| **Files and shell** | FAT16-backed virtual filesystem, editable text files, command history, and tab completion. |
+| **Networking** | Intel e1000, DHCP, and a small Rust-based plain HTTP client. |
+| **Build and verify** | Make-based build, bootable ISO, persistent data disk, and host-side disk checks. |
+
+### Networking in QEMU
+
+The `ip` command displays the adapter and DHCP configuration:
+
+![Daneel's RiTron displaying its DHCP-assigned network configuration](docs/screenshots/network.png)
 
 ## Guides
 
-- [Kernel architecture and source layout](docs/ARCHITECTURE.md)
-- [Shell and FAT16 filesystem](docs/FILESYSTEM.md)
-- [Networking and HTTP client](docs/NETWORKING.md)
+| Guide | What you'll find |
+| --- | --- |
+| [Building and running](docs/BUILD.md) | Prerequisites, Linux and Windows setup, Docker, and QEMU. |
+| [Kernel architecture](docs/ARCHITECTURE.md) | Boot handoff, source layout, and supported virtual hardware. |
+| [Shell and filesystem](docs/FILESYSTEM.md) | Shell commands, editor controls, FAT16 layout, and storage behavior. |
+| [Networking](docs/NETWORKING.md) | DHCP, the `httpget` command, a host-side test server, and limitations. |
 
-## Key features
+## Data safety
 
-- UEFI bootloader and freestanding C++ kernel
-- GOP framebuffer console, interrupt-driven PS/2 keyboard, PIT/PIC timer, and
-  basic page allocator and heap
-- ATA PIO data disk and FAT16 with ASCII long filenames, directories, file
-  copy/move, and ordered file replacement
-- Interactive shell with command history, cursor editing, quoting, and Tab
-  completion
-- e1000 Ethernet with DHCP and a Rust-based plain HTTP/1.0 GET client
-- Host utility to verify the generated FAT16 disk and stored EFI images
+The FAT16 disk at `build/data-disk.img` persists across runs. Back it up if it
+contains files you need: `make clean` removes the entire `build/` directory,
+including that disk.
 
-See the guides above for supported commands, limitations, and implementation
-details. The OS is experimental: back up `build/data-disk.img` if its contents
-matter. `make clean` removes the entire `build/` directory, including that
-persistent disk.
+For project standards and participation, see [Contributing](CONTRIBUTING.md),
+[Code of Conduct](CODE_OF_CONDUCT.md), and [Security](SECURITY.md).

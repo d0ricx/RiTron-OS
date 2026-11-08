@@ -1,0 +1,10 @@
+# Normalize repository text files regardless of the contributor's platform.
+* text=auto eol=lf
+
+# Preserve binary image, firmware, and executable bytes exactly.
+*.efi binary
+*.EFI binary
+*.img binary
+*.iso binary
+*.fd binary
+*.a binary

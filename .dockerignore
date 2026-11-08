@@ -1,0 +1,10 @@
+.git
+.gitignore
+.dockerignore
+build
+dist
+__pycache__
+*.py[cod]
+.venv
+venv
+OVMF_VARS*.fd
