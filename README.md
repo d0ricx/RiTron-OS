@@ -4,19 +4,6 @@
 
 **A small x86_64 UEFI operating system, built to explore kernels, storage, and networking.**
 
-<br>
-
-<img src="https://img.shields.io/badge/Architecture-x86--64-2563eb?style=for-the-badge" alt="x86-64">
-<img src="https://img.shields.io/badge/Boot-UEFI-7c3aed?style=for-the-badge" alt="UEFI">
-<img src="https://img.shields.io/badge/Kernel-C++-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++ kernel">
-<img src="https://img.shields.io/badge/Networking-Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust networking">
-<img src="https://img.shields.io/badge/Build-GNU%20Make-3971ED?style=flat-square" alt="GNU Make">
-<img src="https://img.shields.io/badge/Tools-Python%203-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3">
-<img src="https://img.shields.io/badge/Emulator-QEMU-FF6600?style=flat-square" alt="QEMU">
-<img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square" alt="GPL-3.0">
-
-<br>
-
 <img src="docs/screenshots/shell.png" alt="Daneel's RiTron shell running in QEMU" width="100%">
 
 *The kernel boots to its interactive shell in QEMU.*
