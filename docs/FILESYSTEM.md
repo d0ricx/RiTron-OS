@@ -1,5 +1,8 @@
 # Shell and FAT16 filesystem
 
+**Guides:** [Home](../README.md) · [Build and run](BUILD.md) ·
+[Architecture](ARCHITECTURE.md) · [Networking](NETWORKING.md)
+
 ## Volume layout and persistence
 
 The QEMU data disk is a 16 MiB FAT16 image at `build/data-disk.img`. The shell
@@ -41,6 +44,10 @@ At the `>> ` prompt, use `help` to display the command list.
 | `ip` | Show the e1000 MAC and DHCP network configuration. |
 | `httpget <IPv4[:port]> <path> [save-as]` | Fetch plain HTTP and display or save the response. |
 | `quit` | Request QEMU-compatible poweroff. |
+
+![Daneel's RiTron shell displaying its commands and filesystem status](screenshots/shell.png)
+
+*The shell starts in `/ROOT/USR`; use `help` to see the available commands.*
 
 Paths may be relative or absolute and accept `/` or `\` separators. Quote
 arguments containing spaces:

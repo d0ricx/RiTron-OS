@@ -1,5 +1,8 @@
 # Building and running Daneel's RiTron
 
+**Guides:** [Home](../README.md) · [Architecture](ARCHITECTURE.md) ·
+[Shell and filesystem](FILESYSTEM.md) · [Networking](NETWORKING.md)
+
 ## Prerequisites
 
 The kernel and bootloader are UEFI PE/COFF applications. Building on Linux

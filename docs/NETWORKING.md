@@ -1,11 +1,18 @@
 # Networking
 
+**Guides:** [Home](../README.md) · [Build and run](BUILD.md) ·
+[Architecture](ARCHITECTURE.md) · [Shell and filesystem](FILESYSTEM.md)
+
 ## Current support
 
 In QEMU, the kernel initializes the Intel e1000 virtual adapter and attempts
 DHCP. QEMU user-mode networking typically assigns `10.0.2.15`, with gateway
 `10.0.2.2` and DNS server `10.0.2.3`; use the shell's `ip` command to see the
 actual configuration and MAC address.
+
+![The shell's ip command showing the e1000 DHCP configuration in QEMU](screenshots/network.png)
+
+*Example QEMU user-mode network configuration; addresses may differ.*
 
 The Rust client implements ARP, IPv4, a synchronous TCP connection, and plain
 HTTP/1.0 GET to a numeric IPv4 address. It can print a response or save a

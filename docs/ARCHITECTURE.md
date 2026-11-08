@@ -1,5 +1,8 @@
 # Kernel architecture
 
+**Guides:** [Home](../README.md) · [Build and run](BUILD.md) ·
+[Shell and filesystem](FILESYSTEM.md) · [Networking](NETWORKING.md)
+
 ## Boot and runtime
 
 The UEFI boot application discovers the graphics and ACPI information needed
