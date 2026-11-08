@@ -6,23 +6,14 @@
 
 <br>
 
-**Kernel & networking**
-
-![C++ kernel](https://img.shields.io/badge/C%2B%2B-kernel-00599C?logo=cplusplus&logoColor=white)
-![Rust networking](https://img.shields.io/badge/Rust-networking-000000?logo=rust&logoColor=white)
-
-**Build tools**
-
-![GNU Make](https://img.shields.io/badge/GNU_Make-build-3971ED)
-![Python 3](https://img.shields.io/badge/Python-3-3776AB?logo=python&logoColor=white)
-![MinGW-w64](https://img.shields.io/badge/MinGW--w64-cross--compiler-0078D4)
-![xorriso](https://img.shields.io/badge/xorriso-ISO_builder-555555)
-![Docker](https://img.shields.io/badge/Docker-build-2496ED?logo=docker&logoColor=white)
-
-**Run & test**
-
-![UEFI](https://img.shields.io/badge/UEFI-boot-6B4FBB)
-![QEMU](https://img.shields.io/badge/QEMU-tested-FF6600)
+<img src="https://img.shields.io/badge/Architecture-x86--64-2563eb?style=for-the-badge" alt="x86-64">
+<img src="https://img.shields.io/badge/Boot-UEFI-7c3aed?style=for-the-badge" alt="UEFI">
+<img src="https://img.shields.io/badge/Kernel-C++-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++ kernel">
+<img src="https://img.shields.io/badge/Networking-Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust networking">
+<img src="https://img.shields.io/badge/Build-GNU%20Make-3971ED?style=flat-square" alt="GNU Make">
+<img src="https://img.shields.io/badge/Tools-Python%203-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3">
+<img src="https://img.shields.io/badge/Emulator-QEMU-FF6600?style=flat-square" alt="QEMU">
+<img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square" alt="GPL-3.0">
 
 <br>
 
