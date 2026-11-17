@@ -107,11 +107,11 @@ path rules, and a local HTTP demo.
 ## Build and test
 
 ```sh
-make             # Build EFI applications
+make              # Build EFI applications
 make net-test     # Run host-side networking protocol tests
 make disk-test    # Test disk image creation and migration
 make iso disk     # Create boot media and persistent FAT32 disk
-make verify      # Validate the data-disk image
+make verify       # Validate the data-disk image
 make qemu         # Build and launch in QEMU/OVMF
 ```
 
