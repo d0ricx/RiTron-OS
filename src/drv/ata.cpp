@@ -123,6 +123,7 @@ static bool identify_device(uint16_t io_base, uint16_t control_base,
     for (uint32_t index = 0; index < 256; ++index) {
         identify_data[index] = port_in16(io_base);
     }
+    // IDENTIFY words 60-61 report the device's 28-bit addressable sector count.
     *sector_count =
         (uint32_t)identify_data[60] | ((uint32_t)identify_data[61] << 16);
     return *sector_count != 0;
@@ -184,25 +185,25 @@ static bool write_sector(const ATA_DEVICE *device, uint32_t lba,
 }
 
 static bool is_data_disk_boot_sector(const uint8_t *sector) {
-    uint32_t volume_id = (uint32_t)sector[39] |
-                         ((uint32_t)sector[40] << 8) |
-                         ((uint32_t)sector[41] << 16) |
-                         ((uint32_t)sector[42] << 24);
+    uint32_t fat32_volume_id = (uint32_t)sector[67] |
+                               ((uint32_t)sector[68] << 8) |
+                               ((uint32_t)sector[69] << 16) |
+                               ((uint32_t)sector[70] << 24);
+    bool common = sector[510] == 0x55 && sector[511] == 0xAA &&
+                  sector[11] == 0x00 && sector[12] == 0x02;
+    bool fat32 = sector[17] == 0 && sector[22] == 0 &&
+                 (sector[36] != 0 || sector[37] != 0 || sector[38] != 0 ||
+                  sector[39] != 0) &&
+                 fat32_volume_id == DATA_DISK_VOLUME_ID &&
+                 sector[71] == 'K' && sector[72] == 'E' &&
+                 sector[73] == 'R' && sector[74] == 'N' &&
+                 sector[75] == 'E' && sector[76] == 'L' &&
+                 sector[77] == 'D' && sector[78] == 'A' &&
+                 sector[79] == 'T' && sector[80] == 'A' &&
+                 sector[81] == ' ';
 
-    // Match the exact volume identity so boot media is never mistaken for user data.
-    if (sector[510] != 0x55 || sector[511] != 0xAA ||
-        sector[11] != 0x00 || sector[12] != 0x02 ||
-        sector[43] != 'K' || sector[44] != 'E' || sector[45] != 'R' ||
-        sector[46] != 'N' || sector[47] != 'E' || sector[48] != 'L' ||
-        sector[49] != 'D' || sector[50] != 'A' || sector[51] != 'T' ||
-        sector[52] != 'A' || sector[53] != ' ' ||
-        sector[54] != 'F' || sector[55] != 'A' || sector[56] != 'T' ||
-        sector[57] != '1' || sector[58] != '6' || sector[59] != ' ' ||
-        sector[60] != ' ' || sector[61] != ' ' ||
-        volume_id != DATA_DISK_VOLUME_ID) {
-        return false;
-    }
-    return true;
+    // Match only the project's FAT32 identity so boot media cannot be mistaken for user data.
+    return common && fat32;
 }
 
 bool ata_pio_initialize(void) {
@@ -210,7 +211,7 @@ bool ata_pio_initialize(void) {
     static const uint16_t control_bases[2] = {ATA_PRIMARY_CONTROL,
                                               ATA_SECONDARY_CONTROL};
 
-    // Probe both channels/devices, but accept only the project's labeled FAT16 disk.
+    // Probe both channels/devices, but accept only the project's labeled data volume.
     DataDisk.present = false;
     for (uint8_t channel = 0; channel < 2; ++channel) {
         for (uint8_t device = 0; device < 2; ++device) {
@@ -281,6 +282,7 @@ bool ata_pio_flush(void) {
     if (!DataDisk.present) {
         return false;
     }
+    // Filesystem transactions call this before publishing directory metadata.
     port_out8(DataDisk.io_base + 6,
               (uint8_t)(0xE0 | (DataDisk.device << 4)));
     io_delay(DataDisk.control_base);

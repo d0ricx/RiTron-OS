@@ -25,7 +25,7 @@ def directory_entry(name, extension, attributes, first_cluster, size=0):
     return entry
 
 def fat16_image(bootloader_path, kernel_path):
-    """Build an EFI-system-partition-style FAT16 image containing both EFI files."""
+    """Build the compact FAT16 El Torito boot image used by UEFI firmware."""
     files = [
         (b"BOOTX64", b"EFI", bootloader_path.read_bytes()),
         (b"KERNEL", b"EFI", kernel_path.read_bytes()),
@@ -33,23 +33,21 @@ def fat16_image(bootloader_path, kernel_path):
     if any(not contents for _, _, contents in files):
         raise ValueError("EFI images must not be empty")
 
-    # Choose the smallest cluster size that keeps the FAT16 cluster count valid.
+    root_sectors = ROOT_ENTRY_COUNT * 32 // SECTOR_SIZE
     for sectors_per_cluster in (1, 2, 4, 8, 16, 32, 64):
         clusters_per_file = [
             math.ceil(len(contents) / (SECTOR_SIZE * sectors_per_cluster))
             for _, _, contents in files
         ]
-        # FAT type is determined by cluster count, so keep the image in FAT16's range.
         cluster_count = max(FAT16_MIN_CLUSTERS, 3 + sum(clusters_per_file))
-        if cluster_count <= FAT16_MAX_CLUSTERS:
+        fat_sectors = math.ceil((cluster_count + 2) * 2 / SECTOR_SIZE)
+        data_start = 1 + 2 * fat_sectors + root_sectors
+        total_sectors = data_start + cluster_count * sectors_per_cluster
+        if cluster_count <= FAT16_MAX_CLUSTERS and total_sectors <= 0xFFFF:
             break
     else:
-        raise ValueError("EFI files are too large for the generated FAT16 image")
+        raise ValueError("EFI files are too large for the generated boot image")
 
-    fat_sectors = math.ceil((cluster_count + 2) * 2 / SECTOR_SIZE)
-    root_sectors = ROOT_ENTRY_COUNT * 32 // SECTOR_SIZE
-    data_start = 1 + 2 * fat_sectors + root_sectors
-    total_sectors = data_start + cluster_count * sectors_per_cluster
     image = bytearray(total_sectors * SECTOR_SIZE)
 
     boot_sector = memoryview(image)[:SECTOR_SIZE]
@@ -73,7 +71,6 @@ def fat16_image(bootloader_path, kernel_path):
     boot_sector[54:62] = b"FAT16   "
     boot_sector[510:512] = b"\x55\xaa"
 
-    # Cluster 2 is EFI, cluster 3 is BOOT, and file chains begin at cluster 4.
     fat = bytearray(fat_sectors * SECTOR_SIZE)
     struct.pack_into("<HH", fat, 0, 0xFFF8, END_OF_CHAIN)
     struct.pack_into("<HH", fat, 2 * 2, END_OF_CHAIN, END_OF_CHAIN)
@@ -195,6 +192,7 @@ def main():
             cygpath = os.fspath(sibling_cygpath)
 
     # Stage UEFI's removable-media path and El Torito image in a temporary tree.
+    # xorriso reads this tree; none of its temporary files enter the workspace.
     with tempfile.TemporaryDirectory(prefix="daneels-ritron-iso-") as temporary:
         staging = Path(temporary)
         boot_directory = staging / "EFI" / "BOOT"

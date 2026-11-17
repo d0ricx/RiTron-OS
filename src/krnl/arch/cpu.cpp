@@ -20,6 +20,8 @@ typedef struct __attribute__((packed)) {
     uint64_t base;
 } IDT_REGISTER;
 
+// All gates are interrupt gates; only timer/keyboard handlers are installed
+// after exceptions, and the PIC is remapped before those IRQs are unmasked.
 static IDT_GATE InterruptDescriptorTable[256] __attribute__((aligned(16)));
 static volatile uint64_t TimerTicks;
 
@@ -45,15 +47,39 @@ void interrupt_set_gate(uint8_t vector, void (*handler)(void)) {
 static void report_exception(uint32_t vector, uint64_t error_code,
                              uint64_t instruction_pointer) {
     static const char *const names[32] = {
-        "divide error", "debug", "non-maskable interrupt", "breakpoint",
-        "overflow", "bound range", "invalid opcode", "device unavailable",
-        "double fault", "coprocessor segment overrun", "invalid TSS",
-        "segment not present", "stack fault", "general protection fault",
-        "page fault", "reserved", "x87 floating point", "alignment check",
-        "machine check", "SIMD floating point", "virtualization",
-        "control protection", "reserved", "reserved", "reserved", "reserved",
-        "reserved", "reserved", "hypervisor injection", "VMM communication",
-        "security", "reserved"};
+        "divide error", 
+        "debug", 
+        "non-maskable interrupt", 
+        "breakpoint",
+        "overflow", 
+        "bound range", 
+        "invalid opcode", 
+        "device unavailable",
+        "double fault", 
+        "coprocessor segment overrun", 
+        "invalid TSS",
+        "segment not present", 
+        "stack fault", 
+        "general protection fault",
+        "page fault", 
+        "reserved", 
+        "x87 floating point", 
+        "alignment check",
+        "machine check", 
+        "SIMD floating point", 
+        "virtualization",
+        "control protection", 
+        "reserved", 
+        "reserved", 
+        "reserved", 
+        "reserved",
+        "reserved", 
+        "reserved", 
+        "hypervisor injection", 
+        "VMM communication",
+        "security", 
+        "reserved"
+    };
     static const char digits[] = "0123456789ABCDEF";
 
     // This kernel cannot recover yet, so capture the fault details before halting.
@@ -97,6 +123,8 @@ static void report_exception(uint32_t vector, uint64_t error_code,
         report_exception(number, error_code, frame->instruction_pointer);      \
     }
 
+// x86 exception stubs differ in whether the CPU pushed an error-code word.
+// Keep their C signatures aligned with that hardware-defined stack layout.
 EXCEPTION_NO_ERROR(0)
 EXCEPTION_NO_ERROR(1)
 EXCEPTION_NO_ERROR(2)

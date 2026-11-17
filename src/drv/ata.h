@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Locate the project's FAT16 disk by volume signature, not by device order. */
+/* Locate the project's FAT32 data disk by volume signature, not device order. */
 bool ata_pio_initialize(void);
 uint32_t ata_pio_sector_count(void);
 /* Transfer 512-byte sectors using bounded legacy ATA LBA28 PIO operations. */

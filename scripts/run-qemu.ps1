@@ -24,6 +24,7 @@ if ($null -eq $qemuCommand) {
 
 if ([string]::IsNullOrWhiteSpace($OvmfCode) -or
     [string]::IsNullOrWhiteSpace($OvmfVars)) {
+    # Infer typical QEMU firmware folders, but preserve explicit per-file overrides.
     $qemuDirectory = Split-Path -Parent $qemuCommand.Source
     $qemuPrefix = Split-Path -Parent $qemuDirectory
     $firmwareDirectories = @(
@@ -78,6 +79,7 @@ $varsPath = (Resolve-Path -LiteralPath $OvmfVars).Path
 $isoPath = (Resolve-Path -LiteralPath $Iso).Path
 $diskPath = (Resolve-Path -LiteralPath $Disk).Path
 $writableVars = Join-Path (Split-Path -Parent $isoPath) "OVMF_VARS.fd"
+# QEMU updates the variable store during boot; never pass the template writable.
 Copy-Item -LiteralPath $varsPath -Destination $writableVars -Force
 
 & $qemuCommand.Source `

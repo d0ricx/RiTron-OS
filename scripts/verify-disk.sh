@@ -7,7 +7,7 @@ rustc="${RUSTC:-rustc}"
 output="$project_root/build/verify-disk"
 
 if [[ ! -f "$disk" ]]; then
-    echo "FAT16 data disk not found: $disk" >&2
+    echo "FAT data disk not found: $disk" >&2
     exit 1
 fi
 if ! command -v "$rustc" >/dev/null 2>&1; then

@@ -5,5 +5,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /workspace
     volumes:
+      # Mounting the workspace keeps build outputs available on the host.
       - .:/workspace
-    command: ["make", "iso", "disk", "verify"]
+    # Run the same protocol tests and image/disk checks as the documented build flow.
+    command: ["make", "net-test", "disk-test", "iso", "disk", "verify"]

@@ -251,6 +251,7 @@ static bool initialize_rings(void) {
         ReceiveDescriptors[index].special = 0;
     }
     // Give RX all descriptors initially; RDT is the last available ring entry.
+    // Ring sizes are multiples of 128 bytes as required by the device.
     mmio_write(REG_RDBAL, (uint32_t)receive_address);
     mmio_write(REG_RDBAH, 0);
     mmio_write(REG_RDLEN, sizeof(ReceiveDescriptors));
@@ -426,6 +427,7 @@ static bool receive_packet(size_t *length) {
     if ((descriptor->status & DESCRIPTOR_DONE) == 0) {
         return false;
     }
+    // Copy before clearing DD and returning the descriptor to hardware.
     *length = descriptor->length;
     if (*length > sizeof(ReceivedPacket) || descriptor->errors != 0) {
         *length = 0;
@@ -594,6 +596,7 @@ static bool parse_dhcp_response(const uint8_t *packet, size_t length,
     options = bootp + 240;
     option_offset = 0;
     response->message_type = 0;
+    // DHCP options are TLVs; every length is checked before dereferencing value.
     while (option_offset < bootp_length - 240) {
         uint8_t option = options[option_offset++];
         uint8_t option_length;
@@ -666,7 +669,7 @@ E1000_RESULT e1000_dhcp_acquire(E1000_STALL stall) {
         transaction_id = ((transaction_id << 5) | (transaction_id >> 27)) ^
                          NetworkConfig.mac_address[index];
     }
-    // Each attempt performs the standard DISCOVER/OFFER then REQUEST/ACK exchange.
+    // Each attempt performs DISCOVER/OFFER then REQUEST/ACK with one transaction ID.
     for (uint32_t attempt = 0; attempt < DHCP_ATTEMPTS; ++attempt) {
         size_t packet_length =
             build_dhcp_packet(DhcpPacket, DHCP_DISCOVER,

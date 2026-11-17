@@ -1,7 +1,7 @@
 #include "ata.h"
 #include "cpu.h"
 #include "e1000.h"
-#include "fat16.h"
+#include "fat32.h"
 #include "keyboard.h"
 #include "memory.h"
 #include "power.h"
@@ -9,8 +9,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+bool memory_initialize(const BOOT_INFO *boot_info);
+void *kernel_allocate(size_t size);
+void kernel_release(void *allocation);
+
 // The shell owns command-line editing and the full-screen editor. Large fixed
 // buffers avoid dynamic allocation in early kernel startup and interrupt paths.
+// The HTTP FFI also writes its complete response into the editor-sized buffer.
 #define SHELL_LINE_CAPACITY 600
 #define SHELL_ARGUMENT_COUNT 4
 #define SHELL_HISTORY_CAPACITY 8
@@ -21,9 +26,9 @@ typedef void (*KERNEL_STALL)(size_t);
 typedef void (*KERNEL_POWER_OFF)(void);
 
 extern "C" int32_t daneels_ritron_http_get(
-    uint32_t remote_ip, uint16_t port, const uint8_t *path,
-    size_t path_length, uint8_t *output, size_t output_capacity,
-    size_t *output_length, uint16_t *http_status,
+    const uint8_t *hostname, size_t hostname_length, uint16_t port,
+    const uint8_t *path, size_t path_length, uint8_t *output,
+    size_t output_capacity, size_t *output_length, uint16_t *http_status,
     void (*stall)(size_t));
 
 static bool FilesystemMounted;
@@ -34,7 +39,7 @@ static char ShellHistory[SHELL_HISTORY_CAPACITY][SHELL_LINE_CAPACITY];
 static size_t ShellHistoryCount;
 static size_t ShellHistoryNext;
 
-static const char *filesystem_result_message(FAT16_RESULT result);
+static const char *filesystem_result_message(FAT32_RESULT result);
 
 static void serial_write_status(EFI_STATUS status) {
     static const char digits[] = "0123456789ABCDEF";
@@ -64,8 +69,8 @@ static void serial_log_hex(const char *label, uint64_t value) {
     serial_write_string("\n");
 }
 
-static void serial_log_filesystem_error(FAT16_RESULT result) {
-    serial_write_string("[kernel] ERROR: FAT16 operation failed (");
+static void serial_log_filesystem_error(FAT32_RESULT result) {
+    serial_write_string("[kernel] ERROR: FAT32 operation failed (");
     serial_write_character((char)('0' + result / 10));
     serial_write_character((char)('0' + result % 10));
     serial_write_string(")\n");
@@ -107,35 +112,25 @@ static EFI_STATUS console_write_ascii(
     return EFI_SUCCESS;
 }
 
-static bool parse_http_endpoint(const char *text, uint32_t *address,
-                               uint16_t *port) {
-    uint32_t parsed_address = 0;
+static bool parse_http_endpoint(const char *text, size_t *hostname_length,
+                                uint16_t *port) {
+    // This parser deliberately accepts DNS hostnames and IPv4 text, not IPv6 literals.
     uint32_t parsed_port = 80;
     const char *cursor = text;
-
-    // Parse exactly four decimal octets; reject overflow instead of truncating.
-    for (size_t octet = 0; octet < 4; ++octet) {
-        uint32_t value = 0;
-        size_t digits = 0;
-        while (*cursor >= '0' && *cursor <= '9') {
-            uint32_t digit = (uint32_t)(*cursor++ - '0');
-            if (value > (255 - digit) / 10) {
-                return false;
-            }
-            value = value * 10 + digit;
-            ++digits;
-        }
-        if (digits == 0) {
+    size_t host_length = 0;
+    while (*cursor != '\0' && *cursor != ':') {
+        const char value = *cursor++;
+        if (!((value >= 'a' && value <= 'z') ||
+              (value >= 'A' && value <= 'Z') ||
+              (value >= '0' && value <= '9') || value == '.' ||
+              value == '-')) {
             return false;
         }
-        parsed_address = (parsed_address << 8) | value;
-        if (octet != 3) {
-            if (*cursor++ != '.') {
-                return false;
-            }
-        }
+        ++host_length;
     }
-
+    if (host_length == 0 || host_length > 253) {
+        return false;
+    }
     if (*cursor == ':') {
         ++cursor;
         parsed_port = 0;
@@ -155,7 +150,7 @@ static bool parse_http_endpoint(const char *text, uint32_t *address,
     if (*cursor != '\0') {
         return false;
     }
-    *address = parsed_address;
+    *hostname_length = host_length;
     *port = (uint16_t)parsed_port;
     return true;
 }
@@ -178,6 +173,8 @@ static const char *http_client_error(int32_t result) {
         return "HTTP response exceeded the 64 KiB buffer.\r\n";
     case 8:
         return "The network adapter could not transmit a frame.\r\n";
+    case 9:
+        return "DNS lookup failed; check the DHCP DNS server and hostname.\r\n";
     default:
         return "HTTP request failed.\r\n";
     }
@@ -542,9 +539,10 @@ static EFI_STATUS run_editor(EFI_SIMPLE_TEXT_INPUT_PROTOCOL *input,
         }
 
         if (key.UnicodeChar == 0x13) {
-            FAT16_RESULT result =
-                fat16_write_file(filename, EditorBuffer, (uint32_t)length);
-            if (result != FAT16_OK) {
+            // Save replaces the file through FAT's staged-chain write path.
+            FAT32_RESULT result =
+                fat32_write_file(filename, EditorBuffer, (uint32_t)length);
+            if (result != FAT32_OK) {
                 serial_log_filesystem_error(result);
                 status = output->SetCursorPosition(output, 0, 0);
                 if (!EFI_ERROR(status)) {
@@ -615,61 +613,62 @@ static EFI_STATUS run_editor(EFI_SIMPLE_TEXT_INPUT_PROTOCOL *input,
     }
 }
 
-static FAT16_RESULT ensure_directory(const char *name) {
-    FAT16_RESULT result = fat16_change_directory(name);
+static FAT32_RESULT ensure_directory(const char *name) {
+    FAT32_RESULT result = fat32_change_directory(name);
 
-    if (result == FAT16_NOT_FOUND) {
-        result = fat16_make_directory(name);
-        if (result != FAT16_OK) {
+    // Change back to the parent after either finding or creating the child.
+    if (result == FAT32_NOT_FOUND) {
+        result = fat32_make_directory(name);
+        if (result != FAT32_OK) {
             return result;
         }
-        result = fat16_change_directory(name);
+        result = fat32_change_directory(name);
     }
-    if (result != FAT16_OK) {
+    if (result != FAT32_OK) {
         return result;
     }
-    return fat16_change_directory("..");
+    return fat32_change_directory("..");
 }
 
-static FAT16_RESULT initialize_filesystem_layout(void) {
+static FAT32_RESULT initialize_filesystem_layout(void) {
     // Build the shell's virtual root and system/user split on first mount.
-    FAT16_RESULT result = ensure_directory("ROOT");
+    FAT32_RESULT result = ensure_directory("ROOT");
 
-    if (result != FAT16_OK) {
+    if (result != FAT32_OK) {
         return result;
     }
-    result = fat16_change_directory("ROOT");
-    if (result != FAT16_OK) {
+    result = fat32_change_directory("ROOT");
+    if (result != FAT32_OK) {
         return result;
     }
     result = ensure_directory("SYSTEM");
-    if (result != FAT16_OK) {
+    if (result != FAT32_OK) {
         return result;
     }
     result = ensure_directory("USR");
-    if (result != FAT16_OK) {
+    if (result != FAT32_OK) {
         return result;
     }
-    result = fat16_change_directory("/");
-    if (result != FAT16_OK) {
+    result = fat32_change_directory("/");
+    if (result != FAT32_OK) {
         return result;
     }
-    result = fat16_set_root_directory("ROOT");
-    if (result != FAT16_OK) {
+    result = fat32_set_root_directory("ROOT");
+    if (result != FAT32_OK) {
         return result;
     }
-    result = fat16_protect_directory("SYSTEM");
-    if (result != FAT16_OK) {
+    result = fat32_protect_directory("SYSTEM");
+    if (result != FAT32_OK) {
         return result;
     }
-    return fat16_change_directory("USR");
+    return fat32_change_directory("USR");
 }
 
 static bool mount_data_disk(void) {
-    FAT16_IO io;
-    FAT16_RESULT result;
+    FAT32_IO io;
+    FAT32_RESULT result;
 
-    // Bind FAT16 to the ATA block callbacks, then establish shell protection policy.
+    // Bind FAT32 to the ATA block callbacks, then establish shell protection policy.
     if (!ata_pio_initialize()) {
         return false;
     }
@@ -679,13 +678,13 @@ static bool mount_data_disk(void) {
     io.read_blocks = ata_read_callback;
     io.write_blocks = ata_write_callback;
     io.flush_blocks = ata_flush_callback;
-    result = fat16_mount(&io);
-    if (result == FAT16_OK) {
+    result = fat32_mount(&io);
+    if (result == FAT32_OK) {
         result = initialize_filesystem_layout();
-        if (result == FAT16_OK) {
+        if (result == FAT32_OK) {
             FilesystemMounted = true;
             serial_write_string(
-                "[kernel] Mounted persistent FAT16 filesystem at /ROOT\n");
+                "[kernel] Mounted persistent FAT filesystem at /ROOT\n");
             serial_write_string(
                 "[kernel] /ROOT/SYSTEM is read-only; user files belong in /ROOT/USR\n");
         } else {
@@ -697,42 +696,42 @@ static bool mount_data_disk(void) {
         serial_log_filesystem_error(result);
     }
     if (!FilesystemMounted) {
-        serial_write_string("[kernel] ERROR: no writable FAT16 data disk found\n");
+        serial_write_string("[kernel] ERROR: no writable FAT data disk found\n");
     }
     return FilesystemMounted;
 }
 
-static const char *filesystem_result_message(FAT16_RESULT result) {
+static const char *filesystem_result_message(FAT32_RESULT result) {
     switch (result) {
-    case FAT16_NOT_FOUND:
+    case FAT32_NOT_FOUND:
         return "Entry not found.\r\n";
-    case FAT16_ALREADY_EXISTS:
+    case FAT32_ALREADY_EXISTS:
         return "An entry with that name already exists.\r\n";
-    case FAT16_NOT_DIRECTORY:
+    case FAT32_NOT_DIRECTORY:
         return "That entry is not a directory.\r\n";
-    case FAT16_NOT_EMPTY:
+    case FAT32_NOT_EMPTY:
         return "Directory is not empty; use rmdir -rf <directory>.\r\n";
-    case FAT16_IS_DIRECTORY:
+    case FAT32_IS_DIRECTORY:
         return "That entry is a directory.\r\n";
-    case FAT16_NO_SPACE:
+    case FAT32_NO_SPACE:
         return "No space or directory entries are available.\r\n";
-    case FAT16_INVALID_NAME:
+    case FAT32_INVALID_NAME:
         return "Invalid FAT filename (maximum 255 printable ASCII characters).\r\n";
-    case FAT16_ROOT_DIRECTORY:
+    case FAT32_ROOT_DIRECTORY:
         return "The root directory cannot be removed.\r\n";
-    case FAT16_CURRENT_DIRECTORY:
+    case FAT32_CURRENT_DIRECTORY:
         return "Cannot remove the current directory or one of its parents.\r\n";
-    case FAT16_PATH_TOO_DEEP:
+    case FAT32_PATH_TOO_DEEP:
         return "Directory nesting limit reached.\r\n";
-    case FAT16_IO_ERROR:
+    case FAT32_IO_ERROR:
         return "Disk I/O failed.\r\n";
-    case FAT16_CORRUPT:
-        return "The FAT16 filesystem is invalid or damaged.\r\n";
-    case FAT16_FILE_TOO_LARGE:
+    case FAT32_CORRUPT:
+        return "The FAT filesystem is invalid or damaged.\r\n";
+    case FAT32_FILE_TOO_LARGE:
         return "File is larger than the 64 KiB buffer limit.\r\n";
-    case FAT16_READ_ONLY:
+    case FAT32_READ_ONLY:
         return "System files and directories are read-only.\r\n";
-    case FAT16_OK:
+    case FAT32_OK:
         return "";
     }
     return "Filesystem operation failed.\r\n";
@@ -748,7 +747,7 @@ static size_t split_arguments(char *line, char *arguments[],
     char *read = line;
     char *write = line;
 
-    // Parse in place: the write cursor removes quote characters without allocation.
+    // Read/write cursors share the line buffer; quotes group text but are not retained.
     while (*read != '\0') {
         char quote = '\0';
 
@@ -788,11 +787,11 @@ static size_t split_arguments(char *line, char *arguments[],
 }
 
 static EFI_STATUS print_filesystem_result(
-    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *console, FAT16_RESULT result,
+    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *console, FAT32_RESULT result,
     const char *success_message) {
     EFI_STATUS status;
 
-    if (result == FAT16_OK) {
+    if (result == FAT32_OK) {
         status = console_write_ascii(console, success_message);
     } else {
         serial_log_filesystem_error(result);
@@ -862,7 +861,7 @@ static EFI_STATUS run_command(char *line,
     char *arguments[SHELL_ARGUMENT_COUNT];
     size_t argument_count;
     EFI_STATUS status;
-    FAT16_RESULT result;
+    FAT32_RESULT result;
     const char *success_message;
 
     if (line[0] != '\0') {
@@ -871,6 +870,7 @@ static EFI_STATUS run_command(char *line,
         serial_write_string("\n");
     }
     // Tokenize before dispatch; all command handlers share the same bounded buffers.
+    // The returned sentinels distinguish overflow from an unterminated quote.
     argument_count = split_arguments(
         line, arguments, sizeof(arguments) / sizeof(arguments[0]));
     if (argument_count == 0) {
@@ -902,7 +902,7 @@ static EFI_STATUS run_command(char *line,
             "cd <path>  ls  pwd  mkdir <path>  rmdir [-rf] <path>\r\n"
             "mkfile <path>  cat <file>  open <file>  rm <file>\r\n"
             "cp <source> <destination>  mv <source> <destination>  ip  httpget\r\n"
-            "httpget <IPv4[:port]> <path> [save-as] downloads plain HTTP.\r\n"
+            "httpget <host[:port]> <path> [save-as] downloads plain HTTP.\r\n"
             "Filesystem root: /ROOT. SYSTEM is read-only; save user files in USR.\r\n");
         return EFI_ERROR(status) ? status : print_prompt(output);
     }
@@ -912,7 +912,7 @@ static EFI_STATUS run_command(char *line,
     }
     // Networking commands are independent of FAT availability unless saving a file.
     if (strings_equal(arguments[0], "httpget")) {
-        uint32_t remote_ip;
+        size_t hostname_length;
         uint16_t port;
         size_t response_length = 0;
         uint16_t response_status = 0;
@@ -920,13 +920,13 @@ static EFI_STATUS run_command(char *line,
 
         if (argument_count != 3 && argument_count != 4) {
             status = console_write_ascii(
-                output, "Usage: httpget <IPv4[:port]> <path> [save-as]\r\n");
+                output, "Usage: httpget <host[:port]> <path> [save-as]\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
-        if (!parse_http_endpoint(arguments[1], &remote_ip, &port) ||
+        if (!parse_http_endpoint(arguments[1], &hostname_length, &port) ||
             arguments[2][0] != '/') {
             status = console_write_ascii(
-                output, "Use a numeric IPv4 address and an absolute HTTP path.\r\n");
+                output, "Use a hostname or IPv4 address and an absolute HTTP path.\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
         if (!e1000_has_ipv4_address()) {
@@ -939,8 +939,9 @@ static EFI_STATUS run_command(char *line,
             return status;
         }
         http_result = daneels_ritron_http_get(
-            remote_ip, port, (const uint8_t *)arguments[2],
-            string_length(arguments[2]), (uint8_t *)EditorBuffer,
+            (const uint8_t *)arguments[1], hostname_length, port,
+            (const uint8_t *)arguments[2], string_length(arguments[2]),
+            (uint8_t *)EditorBuffer,
             sizeof(EditorBuffer), &response_length, &response_status, stall);
         if (http_result != 0) {
             status = console_write_ascii(output, http_client_error(http_result));
@@ -965,12 +966,12 @@ static EFI_STATUS run_command(char *line,
             // Filesystem-dependent operations stop here rather than reporting false success.
             if (!FilesystemMounted) {
                 status = console_write_ascii(
-                    output, "No FAT16 data disk is mounted; response not saved.\r\n");
+                    output, "No FAT data disk is mounted; response not saved.\r\n");
                 return EFI_ERROR(status) ? status : print_prompt(output);
             }
-            FAT16_RESULT save_result = fat16_write_file(
+            FAT32_RESULT save_result = fat32_write_file(
                 arguments[3], EditorBuffer, (uint32_t)response_length);
-            if (save_result != FAT16_OK) {
+            if (save_result != FAT32_OK) {
                 status = print_filesystem_result(output, save_result, "");
                 return EFI_ERROR(status) ? status : print_prompt(output);
             }
@@ -1001,7 +1002,7 @@ static EFI_STATUS run_command(char *line,
     }
 
     if (!FilesystemMounted) {
-        status = console_write_ascii(output, "No FAT16 data disk is mounted.\r\n");
+        status = console_write_ascii(output, "No FAT data disk is mounted.\r\n");
         return EFI_ERROR(status) ? status : print_prompt(output);
     }
 
@@ -1010,7 +1011,7 @@ static EFI_STATUS run_command(char *line,
             status = console_write_ascii(output, "Usage: cd <directory-path>\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
-        result = fat16_change_directory(arguments[1]);
+        result = fat32_change_directory(arguments[1]);
         success_message = "";
     } else if (strings_equal(arguments[0], "cat")) {
         uint32_t file_size = 0;
@@ -1019,9 +1020,9 @@ static EFI_STATUS run_command(char *line,
             status = console_write_ascii(output, "Usage: cat <filename>\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
-        result = fat16_read_file(arguments[1], EditorBuffer,
+        result = fat32_read_file(arguments[1], EditorBuffer,
                                  sizeof(EditorBuffer), &file_size);
-        if (result != FAT16_OK) {
+        if (result != FAT32_OK) {
             return print_filesystem_result(output, result, "");
         }
         status = console_write_file_text(output, EditorBuffer, file_size);
@@ -1032,7 +1033,7 @@ static EFI_STATUS run_command(char *line,
                 output, "Usage: cp <source-file> <destination-file>\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
-        result = fat16_copy_file(arguments[1], arguments[2]);
+        result = fat32_copy_file(arguments[1], arguments[2]);
         success_message = "File copied.\r\n";
     } else if (strings_equal(arguments[0], "mv")) {
         if (argument_count != 3) {
@@ -1040,14 +1041,14 @@ static EFI_STATUS run_command(char *line,
                 output, "Usage: mv <source-file> <destination-file>\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
-        result = fat16_move_file(arguments[1], arguments[2]);
+        result = fat32_move_file(arguments[1], arguments[2]);
         success_message = "File moved.\r\n";
     } else if (strings_equal(arguments[0], "rm")) {
         if (argument_count != 2) {
             status = console_write_ascii(output, "Usage: rm <filename>\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
-        result = fat16_remove_file(arguments[1]);
+        result = fat32_remove_file(arguments[1]);
         success_message = "File removed.\r\n";
     } else if (strings_equal(arguments[0], "open")) {
         uint32_t file_size = 0;
@@ -1056,17 +1057,17 @@ static EFI_STATUS run_command(char *line,
             status = console_write_ascii(output, "Usage: open <filename>\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
-        if (fat16_path_is_read_only(arguments[1])) {
+        if (fat32_path_is_read_only(arguments[1])) {
             status = console_write_ascii(
                 output, "System files are read-only.\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
-        result = fat16_read_file(arguments[1], EditorBuffer,
+        result = fat32_read_file(arguments[1], EditorBuffer,
                                  sizeof(EditorBuffer), &file_size);
-        if (result != FAT16_OK && result != FAT16_NOT_FOUND) {
+        if (result != FAT32_OK && result != FAT32_NOT_FOUND) {
             return print_filesystem_result(output, result, "");
         }
-        if (result == FAT16_NOT_FOUND) {
+        if (result == FAT32_NOT_FOUND) {
             file_size = 0;
         } else {
             uint32_t write_index = 0;
@@ -1091,7 +1092,7 @@ static EFI_STATUS run_command(char *line,
             status = console_write_ascii(output, "Usage: mkdir <directory>\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
-        result = fat16_make_directory(arguments[1]);
+        result = fat32_make_directory(arguments[1]);
         success_message = "Directory created.\r\n";
     } else if (strings_equal(arguments[0], "rmdir")) {
         bool recursive = false;
@@ -1108,14 +1109,14 @@ static EFI_STATUS run_command(char *line,
                 output, "Usage: rmdir [-rf] <directory>\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
-        result = fat16_remove_directory(name, recursive);
+        result = fat32_remove_directory(name, recursive);
         success_message = "Directory removed.\r\n";
     } else if (strings_equal(arguments[0], "mkfile")) {
         if (argument_count != 2) {
             status = console_write_ascii(output, "Usage: mkfile <filename>\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
-        result = fat16_make_file(arguments[1]);
+        result = fat32_make_file(arguments[1]);
         success_message = "Empty file created.\r\n";
     } else if (strings_equal(arguments[0], "ls")) {
         LIST_OUTPUT_CONTEXT list_output = {output, EFI_SUCCESS};
@@ -1124,8 +1125,8 @@ static EFI_STATUS run_command(char *line,
             status = console_write_ascii(output, "Usage: ls\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
-        result = fat16_list_directory(print_list_entry, &list_output);
-        if (result == FAT16_OK && EFI_ERROR(list_output.status)) {
+        result = fat32_list_directory(print_list_entry, &list_output);
+        if (result == FAT32_OK && EFI_ERROR(list_output.status)) {
             return list_output.status;
         }
         success_message = "";
@@ -1134,7 +1135,7 @@ static EFI_STATUS run_command(char *line,
             status = console_write_ascii(output, "Usage: pwd\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
-        if (!fat16_get_path(ShellPathBuffer, sizeof(ShellPathBuffer))) {
+        if (!fat32_get_path(ShellPathBuffer, sizeof(ShellPathBuffer))) {
             status = console_write_ascii(output, "Current path is too long.\r\n");
             return EFI_ERROR(status) ? status : print_prompt(output);
         }
@@ -1192,6 +1193,7 @@ static void collect_completion(void *context, const char *name,
         static_cast<SHELL_COMPLETION_CONTEXT *>(context);
 
     (void)size;
+    // Completion is intentionally bounded; a full result set is truncated, not allocated.
     if (matches->count >= sizeof(matches->names) / sizeof(matches->names[0]) ||
         !shell_prefix_matches(name, matches->prefix,
                               matches->prefix_length)) {
@@ -1326,6 +1328,7 @@ static EFI_STATUS complete_shell_line(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *output,
     size_t prefix_start = token_start + (quoted ? 1 : 0);
     const char *prefix = line + prefix_start;
     size_t prefix_length = *length - prefix_start;
+    // Do not guess path traversal: completion is limited to one cwd component.
     if (prefix_length == 0 ||
         prefix[0] == '/' || prefix[0] == '\\') {
         return EFI_SUCCESS;
@@ -1348,9 +1351,9 @@ static EFI_STATUS complete_shell_line(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *output,
                 return EFI_SUCCESS;
             }
         }
-        FAT16_RESULT result = fat16_list_directory(collect_completion,
+        FAT32_RESULT result = fat32_list_directory(collect_completion,
                                                     matches);
-        if (result != FAT16_OK) {
+        if (result != FAT32_OK) {
             serial_log_filesystem_error(result);
             return console_write_ascii(output,
                                        filesystem_result_message(result));
@@ -1439,6 +1442,7 @@ static EFI_STATUS run_shell(EFI_SIMPLE_TEXT_INPUT_PROTOCOL *input,
     size_t origin_column;
     size_t origin_row;
     size_t line_limit = sizeof(line) - 1;
+    // A sentinel means the user is editing a fresh command, not browsing history.
     size_t history_browse = SHELL_HISTORY_CAPACITY;
     char history_scratch[SHELL_LINE_CAPACITY];
     EFI_STATUS status;
@@ -1454,7 +1458,7 @@ static EFI_STATUS run_shell(EFI_SIMPLE_TEXT_INPUT_PROTOCOL *input,
     status = console_write_ascii(output, FilesystemMounted
                                             ? "Filesystem ready at /ROOT/USR. "
                                               "Type help for commands.\r\n"
-                                            : "FAT16 data disk unavailable.\r\n");
+                                            : "FAT data disk unavailable.\r\n");
     if (EFI_ERROR(status)) {
         serial_log_error("print startup message", status);
         return status;

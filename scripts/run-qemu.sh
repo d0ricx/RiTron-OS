@@ -26,6 +26,7 @@ if ! command -v "$qemu" >/dev/null 2>&1; then
 fi
 
 if [[ -z "$ovmf_code" || -z "$ovmf_vars" ]]; then
+    # Search common distro layouts while allowing either firmware file to be overridden.
     for directory in /usr/share/OVMF /usr/share/ovmf /usr/share/edk2/x64 /usr/share/qemu; do
         [[ -d "$directory" ]] || continue
         for suffix in 4M ""; do
@@ -59,6 +60,7 @@ if [[ ! -f "$ovmf_vars" ]]; then
 fi
 
 mkdir -p "$(dirname -- "$iso")"
+# OVMF writes boot variables, so use a per-run copy rather than modifying the template.
 writable_vars="$(dirname -- "$iso")/OVMF_VARS.fd"
 cp -- "$ovmf_vars" "$writable_vars"
 

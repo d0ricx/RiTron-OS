@@ -100,6 +100,7 @@ bool memory_initialize(const BOOT_INFO *boot_info) {
         boot_info->memory_map_size / boot_info->memory_descriptor_size;
 
     // Only conventional UEFI pages are candidates; all other regions stay reserved.
+    // Firmware descriptors may be larger than our prefix, so stride by the ABI size.
     for (uint64_t descriptor_index = 0; descriptor_index < descriptor_count;
          ++descriptor_index) {
         const UEFI_MEMORY_DESCRIPTOR *descriptor =
@@ -149,6 +150,7 @@ void page_release(void *page) {
     uintptr_t address = (uintptr_t)page;
     size_t page_index;
 
+    // Ignore duplicate releases; the bitmap is the allocator's ownership record.
     if (!MemoryReady || page == NULL || (address & (PAGE_SIZE - 1)) != 0 ||
         address < MINIMUM_MANAGED_ADDRESS ||
         address >= (uint64_t)MEMORY_BITMAP_BITS * PAGE_SIZE) {
@@ -174,6 +176,7 @@ static bool expand_heap(size_t minimum_size) {
         return false;
     }
     // Each new extent begins with one block header followed by free payload.
+    // Each run is a separate extent; coalescing never crosses page-run boundaries.
     pages_needed =
         (minimum_size + sizeof(HEAP_BLOCK) + PAGE_SIZE - 1) / PAGE_SIZE;
     if (pages_needed > SIZE_MAX / PAGE_SIZE) {

@@ -136,6 +136,7 @@ void keyboard_handle_interrupt(void) {
     EFI_INPUT_KEY key;
     bool released;
 
+    // Prefix state spans IRQ invocations because the controller emits bytes separately.
     if (scan == 0xE0 || scan == 0xE1) {
         // Set-1 extended keys arrive as a prefix followed by a separate scan code.
         ExtendedScanCode = scan == 0xE0;
@@ -208,6 +209,7 @@ void keyboard_handle_interrupt(void) {
 
     next_head = (uint8_t)((QueueHead + 1) & (KEY_QUEUE_CAPACITY - 1));
     // Leave one slot empty to distinguish full from empty in this ring buffer.
+    // Overflow drops the newest key; interrupt context never waits for the shell.
     if (next_head != QueueTail) {
         KeyQueue[QueueHead] = key;
         QueueHead = next_head;

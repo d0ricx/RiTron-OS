@@ -16,6 +16,9 @@
 #define EFI_HANDLE_PROTOCOL_INDEX 16
 #define EFI_LOCATE_HANDLE_BUFFER_INDEX 36
 
+// UEFI boot-service slots are indexed after the common table header; keeping
+// the ABI indices here avoids pulling a hosted UEFI SDK into this freestanding build.
+
 typedef struct {
     uint32_t Data1;
     uint16_t Data2;
@@ -230,6 +233,7 @@ static EFI_STATUS exit_boot_services(EFI_HANDLE image_handle,
     if (EFI_ERROR(status) || memory_map == NULL) {
         return EFI_ERROR(status) ? status : EFI_ERROR_BIT | 9;
     }
+    // Keep the map allocation stable: any later allocation can stale the map key.
     // The map key must still match when ExitBootServices is called.
     for (uint32_t attempt = 0; attempt < 3; ++attempt) {
         size_t memory_map_size = allocated_size;
@@ -274,6 +278,7 @@ extern "C" EFI_STATUS EFIAPI uefi_boot_kernel(
     if (EFI_ERROR(status)) {
         return status;
     }
+    // The firmware contract ends here; the kernel must use only handed-off state.
     (void)kernel_main(&BootInfo);
     for (;;) {
         __asm__ volatile("cli; hlt");

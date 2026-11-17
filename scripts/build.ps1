@@ -58,6 +58,7 @@ $rustOutputDirectory = Join-Path $resolvedOutputDirectory "krnl\net"
 New-Item -ItemType Directory -Force -Path $efiDirectory | Out-Null
 New-Item -ItemType Directory -Force -Path $rustOutputDirectory | Out-Null
 
+# Rust protocol code is a freestanding static library consumed by the C++ linker.
 $rustObject = Join-Path $rustOutputDirectory "http.a"
 $rustSource = Join-Path $networkDirectory "http.rs"
 $rustFlags = @(
@@ -81,7 +82,7 @@ $linkerFlags = @(
 )
 $commonSources = @(
     (Join-Path $shellDirectory "shell.cpp"),
-    (Join-Path $filesystemDirectory "fat16.cpp"),
+    (Join-Path $filesystemDirectory "fat32.cpp"),
     (Join-Path $consoleDirectory "console.cpp"),
     (Join-Path $inputDirectory "keyboard.cpp"),
     (Join-Path $architectureDirectory "cpu.cpp"),
@@ -93,6 +94,7 @@ $commonSources = @(
     (Join-Path $bootDirectory "uefi.cpp"),
     $rustObject
 )
+# The bootloader and kernel share implementation but expose distinct EFI entries.
 $bootloaderSource = Join-Path $bootDirectory "boot.cpp"
 $kernelTarget = Join-Path $efiDirectory "KERNEL.EFI"
 & $Compiler @flags @linkerFlags "-Wl,-e,efi_main" `

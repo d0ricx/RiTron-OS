@@ -28,7 +28,7 @@ docker compose run --build --rm builder
 ```
 
 The Compose command builds the EFI applications and ISO, creates or updates
-the persistent FAT16 disk, and verifies that disk. For changes that affect
+the persistent FAT32 disk, and verifies that disk. For changes that affect
 runtime behavior, also run the project in QEMU when available:
 
 ```sh

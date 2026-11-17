@@ -9,6 +9,7 @@ efi_directory="$output_directory/EFI/BOOT"
 rust_output_directory="$output_directory/krnl/net"
 
 cd "$project_root"
+# Separate EFI output from protocol object output to mirror Rust's module path.
 mkdir -p "$efi_directory"
 mkdir -p "$rust_output_directory"
 
@@ -43,6 +44,7 @@ flags=(
     -Isrc/fs
 )
 rust_object="$rust_output_directory/http.a"
+# Compile Rust as a no_std static library for linking into both EFI entry images.
 "$rust_compiler" \
     --target x86_64-pc-windows-gnu \
     --edition 2021 \
@@ -58,9 +60,10 @@ linker_flags=(
     -Wl,--subsystem,10
     -Wl,--enable-reloc-section
 )
+# The same kernel objects are linked twice with different UEFI entry points.
 common_sources=(
     src/krnl/shell/shell.cpp
-    src/fs/fat16.cpp
+    src/fs/fat32.cpp
     src/krnl/console/console.cpp
     src/krnl/input/keyboard.cpp
     src/krnl/arch/cpu.cpp

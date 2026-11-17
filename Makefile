@@ -13,7 +13,7 @@ OVMF_VARS ?=
 ISO ?= build/daneels-ritron.iso
 DISK ?= build/data-disk.img
 
-.PHONY: all build iso disk verify qemu clean
+.PHONY: all build iso disk verify net-test disk-test qemu clean
 
 all: build
 
@@ -32,6 +32,21 @@ disk: build
 	$(PYTHON) scripts/create_disk.py --output "$(DISK)" \
 		--bootloader build/EFI/BOOT/BOOTX64.EFI \
 		--kernel build/EFI/BOOT/KERNEL.EFI
+
+ifeq ($(OS),Windows_NT)
+NET_TEST ?= build/net-tests.exe
+else
+NET_TEST ?= build/net-tests
+endif
+
+net-test:
+# Pure protocol modules are built as a host test binary; no EFI or QEMU is needed.
+	$(PYTHON) -c "from pathlib import Path; Path('build').mkdir(exist_ok=True)"
+	$(RUSTC) --edition=2021 --test scripts/net-tests.rs -o "$(NET_TEST)"
+	$(PYTHON) -c "import subprocess; subprocess.run([r'$(NET_TEST)'], check=True)"
+
+disk-test:
+	$(PYTHON) scripts/disk-tests.py
 
 ifeq ($(OS),Windows_NT)
 verify: disk

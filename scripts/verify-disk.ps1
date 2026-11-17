@@ -12,7 +12,7 @@ $diskPath = if ([System.IO.Path]::IsPathRooted($Disk)) {
     Join-Path $projectRoot $Disk
 }
 if (-not (Test-Path -LiteralPath $diskPath -PathType Leaf)) {
-    throw "FAT16 data disk not found: $diskPath"
+    throw "FAT data disk not found: $diskPath"
 }
 
 $rustcCommand = Get-Command $Rustc -ErrorAction SilentlyContinue
@@ -36,5 +36,5 @@ if ($LASTEXITCODE -ne 0) {
 
 & $toolPath $diskPath
 if ($LASTEXITCODE -ne 0) {
-    throw "FAT16 disk verification failed (exit code $LASTEXITCODE)."
+    throw "FAT disk verification failed (exit code $LASTEXITCODE)."
 }

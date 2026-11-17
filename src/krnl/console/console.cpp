@@ -105,6 +105,7 @@ static void fill_pixels(size_t x, size_t y, size_t width, size_t height,
     uint32_t pixel = encode_pixel(color);
 
     for (size_t row = y; row < y + height; ++row) {
+        // GOP stride may include padding beyond the visible horizontal width.
         volatile uint32_t *destination =
             Framebuffer + row * PixelsPerScanLine + x;
         for (size_t column = 0; column < width; ++column) {
